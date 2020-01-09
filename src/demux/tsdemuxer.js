@@ -19,6 +19,15 @@ import { logger } from '../utils/logger';
 import { ErrorTypes, ErrorDetails } from '../errors';
 import { utf8ArrayToStr } from './id3';
 
+// eslint-disable-next-line no-extend-native
+Uint8Array.prototype.toHex = function () {
+  let hex = '';
+  for (let i = 0; i < this.length; i++) {
+    hex += this[i].toString(16);
+  }
+  return hex;
+}
+
 // We are using fixed track IDs for driving the MP4 remuxer
 // instead of following the TS PIDs.
 // There is no reason not to do this and some browsers/SourceBuffer-demuxers
@@ -167,6 +176,8 @@ class TSDemuxer {
     // loop through TS packets
     for (start = syncOffset; start < len; start += 188) {
       if (data[start] === 0x47) {
+        // console.log(data.splice(start, start + 30)); // data 数据结构为：Uint8Array
+        // debugger;//TODO 分析Ts数据解析 => 这里时ts原始数据包 data的类型时Uint8Array
         stt = !!(data[start + 1] & 0x40);
         // pid is a 13-bit field starting at the last bit of TS[1]
         pid = ((data[start + 1] & 0x1f) << 8) + data[start + 2];
@@ -183,8 +194,11 @@ class TSDemuxer {
         }
         switch (pid) {
         case avcId:
+          // 这是解析H264数据
           if (stt) {
             if (avcData && (pes = parsePES(avcData)) && pes.pts !== undefined) {
+              // console.log(pes); //这里时pes数据，数据结构为{data: Uint8Array(5130), pts: 66612600, dts: 66612600, len: 5130}
+              // debugger;
               parseAVCPES(pes, false);
             }
 
@@ -558,9 +572,10 @@ class TSDemuxer {
 
   _parseAVCPES (pes, last) {
     // logger.log('parse new PES');
+    // console.log('[pes.data]' + pes.data.toHex());
     let track = this._avcTrack,
       units = this._parseAVCNALu(pes.data),
-      debug = false,
+      debug = true,
       expGolombDecoder,
       avcSample = this.avcSample,
       push,
@@ -579,8 +594,10 @@ class TSDemuxer {
       pushAccesUnit(avcSample, track);
       avcSample = this.avcSample = createAVCSample(false, pes.pts, pes.dts, '');
     }
-
+    // debugger;
     units.forEach(unit => {
+      console.log( unit );
+      console.log('[unit.data]' + unit.data.slice(0,1).toHex());
       switch (unit.type) {
       // NDR
       case 1:
@@ -599,7 +616,7 @@ class TSDemuxer {
         if (spsfound && data.length > 4) {
           // retrieve slice type by parsing beginning of NAL unit (follow H264 spec, slice_header definition) to detect keyframe embedded in NDR
           let sliceType = new ExpGolomb(data).readSliceType();
-          // 2 : I slice, 4 : SI slice, 7 : I slice, 9: SI slice
+          // 2 : I slice, 4 : SI slice, 7 : I slicsplicee, 9: SI slice
           // SI slice : A slice that is coded using intra prediction only and using quantisation of the prediction samples.
           // An SI slice can be coded such that its decoded samples can be constructed identically to an SP slice.
           // I slice: A slice that is not an SI slice that is decoded using intra prediction only.
@@ -794,7 +811,7 @@ class TSDemuxer {
     });
     // if last PES packet, push samples
     if (last && avcSample) {
-      pushAccesUnit(avcSample, track);
+      pushAccesUnit(avcSample, track);//TODO 最后解析出来的数据统统都push到track里了。2020年01月09日 明天继续
       this.avcSample = null;
     }
   }
